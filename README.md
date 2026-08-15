@@ -2,7 +2,7 @@
 
 A local-first Android app for photos and files. Nothing is uploaded unless you turn on optional Immich backup.
 
-Launcher name is **Files**. Package is `dev.exau.photos`.
+Launcher name is **Files**. Package is `dev.exau.photos` so existing installs keep updating; changing it would look like a different app.
 
 ## What it does
 
