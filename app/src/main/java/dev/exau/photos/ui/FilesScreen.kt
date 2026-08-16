@@ -139,6 +139,7 @@ fun FilesScreen(
     onUnzip: (FileEntry) -> Unit = {},
     onHide: (List<FileEntry>, Boolean) -> Unit = { _, _ -> },
     onShare: (List<FileEntry>) -> Unit = {},
+    onSetCover: (FileEntry) -> Unit = {},
 ) {
     var adding by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf(setOf<String>()) }
@@ -231,6 +232,13 @@ fun FilesScreen(
                 onHide = { onHide(chosen, true) },
                 onUnhide = { onHide(chosen, false) },
                 onShare = { onShare(chosen) },
+                onCover = {
+                    val one = chosen.singleOrNull() ?: return@FileSelectBar
+                    onSetCover(one)
+                    selected = emptySet()
+                    picking = false
+                },
+                canCover = chosen.size == 1 && chosen.first().isImage,
                 canUnzip = chosen.size == 1 && chosen.first().name.endsWith(".zip", true),
             )
         } else if (location is FileLocation.Roots && !adding) {
@@ -595,7 +603,12 @@ private fun RootsGrid(
                 subtitle = if (root.removable) "SD / USB" else "This phone",
                 onClick = { onOpenRoot(root) },
             ) {
-                Icon(painterResource(R.drawable.ic_folder), contentDescription = null, tint = Amber, modifier = Modifier.size(36.dp))
+                Icon(
+                    painterResource(R.drawable.ic_folder_cover),
+                    contentDescription = null,
+                    tint = Color.Unspecified,
+                    modifier = Modifier.fillMaxSize(),
+                )
             }
         }
         items(favorites, key = { "fav-${it.key}" }) { folder ->
@@ -711,17 +724,48 @@ private fun FolderGrid(
                         .combinedClickable(
                             onClick = { if (selecting) onToggle(entry) else onOpenDir(entry) },
                             onLongClick = { onLongSelect(entry) },
-                        )
-                        .padding(10.dp),
+                        ),
                 ) {
-                    Column(
-                        modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.Center,
-                        horizontalAlignment = Alignment.CenterHorizontally,
+                    val cover = entry.coverRelative
+                    if (cover != null && (shareId != null || rootPath != null)) {
+                        val model: Any = when {
+                            shareId != null -> SambaImage(shareId, cover)
+                            rootPath != null -> File(rootPath, cover)
+                            else -> cover
+                        }
+                        AsyncImage(
+                            model = ImageRequest.Builder(context)
+                                .data(model)
+                                .size(512)
+                                .crossfade(false)
+                                .build(),
+                            imageLoader = imageLoader,
+                            contentDescription = entry.name,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    } else {
+                        Icon(
+                            painterResource(R.drawable.ic_folder_cover),
+                            contentDescription = null,
+                            tint = Color.Unspecified,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.BottomCenter)
+                            .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xCC000000))))
+                            .padding(start = 6.dp, end = 6.dp, top = 16.dp, bottom = 6.dp),
                     ) {
-                        Icon(painterResource(R.drawable.ic_folder), contentDescription = null, tint = Amber, modifier = Modifier.size(32.dp))
-                        Spacer(Modifier.height(8.dp))
-                        Text(entry.name, color = Color.White, style = MaterialTheme.typography.labelLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            entry.name,
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelLarge,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                     SelectMark(selected = entry.relative in selected, selecting = selecting)
                 }
@@ -871,6 +915,8 @@ private fun FileSelectBar(
     onHide: () -> Unit,
     onUnhide: () -> Unit,
     onShare: () -> Unit,
+    onCover: () -> Unit,
+    canCover: Boolean,
     canUnzip: Boolean,
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 8.dp)) {
@@ -917,6 +963,7 @@ private fun FileSelectBar(
             FileActionChip("Hide", enabled = !busy && count > 0, onClick = onHide)
             FileActionChip("Unhide", enabled = !busy && count > 0, onClick = onUnhide)
             FileActionChip("Share", enabled = !busy && count > 0, onClick = onShare)
+            FileActionChip("Cover", enabled = !busy && canCover, onClick = onCover)
             FileActionChip("Delete", enabled = !busy && count > 0, danger = true, onClick = onDelete)
         }
     }

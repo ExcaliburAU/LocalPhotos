@@ -41,9 +41,18 @@ object LocalFiles {
                     isVideo = child.isFile && FileKinds.isVideo(child.name),
                     size = if (child.isFile) child.length() else 0L,
                     lastModified = child.lastModified(),
+                    coverRelative = if (child.isDirectory) folderCover(child, rel) else null,
                 )
             }
             .sortedWith(compareByDescending<FileEntry> { it.isDir }.thenBy { it.name.lowercase() })
+    }
+
+    private fun folderCover(dir: File, relative: String): String? {
+        val image = dir.listFiles()
+            ?.filter { it.isFile && !it.name.startsWith('.') && FileKinds.isImage(it.name) }
+            ?.maxByOrNull { it.lastModified() }
+            ?: return null
+        return FileKinds.join(relative, image.name)
     }
 
     fun file(rootPath: String, relative: String): File =

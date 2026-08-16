@@ -12,6 +12,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.exau.photos.data.Album
+import dev.exau.photos.data.AlbumCovers
 import dev.exau.photos.data.FavoritesStore
 import dev.exau.photos.data.DateOverrides
 import dev.exau.photos.data.MediaItem
@@ -41,6 +42,7 @@ import kotlinx.coroutines.withContext
 class PhotosViewModel(application: Application) : AndroidViewModel(application) {
     private val repo = MediaRepository(application)
     private val favoritesStore = FavoritesStore(application)
+    private val albumCovers = AlbumCovers(application)
     private val dateOverrides = DateOverrides(application)
     private val mainHandler = Handler(Looper.getMainLooper())
     val immichPrefs = ImmichPrefs(application)
@@ -139,6 +141,7 @@ class PhotosViewModel(application: Application) : AndroidViewModel(application) 
         refreshJob = viewModelScope.launch {
             if (showSpinner) loading = true
             val loaded = withContext(Dispatchers.IO) {
+                runCatching { repo.scanCaptures() }
                 val library = dateOverrides.apply(
                     runCatching { repo.loadAll() }.getOrDefault(emptyList()),
                 )
@@ -149,7 +152,7 @@ class PhotosViewModel(application: Application) : AndroidViewModel(application) 
             }
             items = loaded.first
             trashed = loaded.second
-            albums = repo.albums(loaded.first)
+            albums = applyAlbumCovers(repo.albums(loaded.first))
             favorites = favoritesStore.ids()
             loading = false
         }
@@ -157,6 +160,26 @@ class PhotosViewModel(application: Application) : AndroidViewModel(application) 
 
     fun toggleFavorite(id: Long) {
         favorites = favoritesStore.toggle(id)
+    }
+
+    fun setAlbumCover(item: MediaItem) {
+        if (item.isVideo) {
+            fileToast = "Pick a photo"
+            return
+        }
+        albumCovers.set(item.bucketId, item.id)
+        albums = applyAlbumCovers(repo.albums(items))
+        fileToast = "Cover set"
+    }
+
+    fun setFolderCover(entry: FileEntry) {
+        if (!entry.isImage) {
+            fileToast = "Pick a photo"
+            return
+        }
+        val key = folderCoverKey(fileLocation) ?: return
+        filePrefs.setFolderCover(key, entry.relative)
+        fileToast = "Cover set"
     }
 
     fun itemByUri(uri: Uri): MediaItem? = items.find { it.uri == uri }
@@ -550,11 +573,35 @@ class PhotosViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun present(entries: List<FileEntry>): List<FileEntry> {
         val visible = if (showHidden) entries else entries.filter { !it.name.startsWith('.') }
-        return when (fileSort) {
+        val sorted = when (fileSort) {
             FileSort.Name -> visible.sortedWith(compareByDescending<FileEntry> { it.isDir }.thenBy { it.name.lowercase() })
             FileSort.Date -> visible.sortedWith(compareByDescending<FileEntry> { it.isDir }.thenByDescending { it.lastModified })
             FileSort.Size -> visible.sortedWith(compareByDescending<FileEntry> { it.isDir }.thenByDescending { it.size })
         }
+        return applyFolderCovers(sorted)
+    }
+
+    private fun applyFolderCovers(entries: List<FileEntry>): List<FileEntry> {
+        val loc = fileLocation
+        return entries.map { entry ->
+            if (!entry.isDir) return@map entry
+            val key = folderCoverKey(loc, entry.relative) ?: return@map entry
+            val chosen = filePrefs.folderCover(key) ?: return@map entry
+            if (loc is FileLocation.Local && !LocalFiles.file(loc.rootPath, chosen).isFile) return@map entry
+            entry.copy(coverRelative = chosen)
+        }
+    }
+
+    private fun folderCoverKey(location: FileLocation, folderRelative: String? = null): String? = when (location) {
+        FileLocation.Roots -> null
+        is FileLocation.Local -> FilePrefs.folderKey("local", location.rootPath, folderRelative ?: location.relative)
+        is FileLocation.Samba -> FilePrefs.folderKey("smb", location.shareId, folderRelative ?: location.relative)
+    }
+
+    private fun applyAlbumCovers(list: List<Album>): List<Album> = list.map { album ->
+        val id = albumCovers.idFor(album.bucketId) ?: return@map album
+        val cover = items.find { it.id == id && it.bucketId == album.bucketId } ?: return@map album
+        album.copy(cover = cover)
     }
 
     private fun runFileOp(clearClip: Boolean = false, done: String? = null, block: () -> Unit) {

@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -73,6 +74,7 @@ fun FileViewerScreen(
     onEdit: (FileEntry) -> Unit,
     onOpen: (FileEntry) -> Unit,
     onPrepareVideo: (FileEntry) -> Unit = {},
+    onSetCover: ((FileEntry) -> Unit)? = null,
 ) {
     if (items.isEmpty()) {
         onBack()
@@ -206,6 +208,13 @@ fun FileViewerScreen(
                             icon = Icons.Filled.Edit,
                             label = if (busy) "…" else "Edit",
                             onClick = { if (!busy) onEdit(current) },
+                        )
+                    }
+                    if (current.isImage && onSetCover != null) {
+                        ViewerAction(
+                            icon = Icons.Filled.Star,
+                            label = "Cover",
+                            onClick = { onSetCover(current) },
                         )
                     }
                     ViewerAction(

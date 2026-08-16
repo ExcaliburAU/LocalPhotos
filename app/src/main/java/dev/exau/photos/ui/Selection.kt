@@ -58,6 +58,7 @@ fun SelectionBar(
     onClose: () -> Unit,
     onToggleAll: () -> Unit,
     onShare: (() -> Unit)? = null,
+    onCover: (() -> Unit)? = null,
     onTrash: (() -> Unit)? = null,
     onRestore: (() -> Unit)? = null,
     onDeleteForever: (() -> Unit)? = null,
@@ -88,6 +89,17 @@ fun SelectionBar(
         )
         if (onShare != null) {
             CircleIcon(Icons.Filled.Share, "Share", onShare, enabled = count > 0)
+        }
+        if (onCover != null) {
+            Text(
+                "Cover",
+                color = if (count == 1) Amber else Mist,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .clickable(enabled = count == 1, onClick = onCover)
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+            )
         }
         if (onRestore != null) {
             CircleIcon(Icons.Filled.Check, "Restore", onRestore, enabled = count > 0, tint = Amber)

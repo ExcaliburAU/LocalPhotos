@@ -72,7 +72,24 @@ class FilePrefs(context: Context) {
         return next
     }
 
+    fun folderCover(key: String): String? =
+        covers().optString(key, "").ifBlank { null }
+
+    fun setFolderCover(key: String, relative: String) {
+        val o = covers()
+        o.put(key, relative)
+        prefs.edit().putString(COVERS, o.toString()).apply()
+    }
+
+    private fun covers(): JSONObject {
+        val raw = prefs.getString(COVERS, "{}").orEmpty()
+        return runCatching { JSONObject(raw) }.getOrDefault(JSONObject())
+    }
+
     companion object {
         private const val PREFS = "file_prefs"
+        private const val COVERS = "folder_covers"
+
+        fun folderKey(kind: String, root: String, relative: String): String = "$kind\n$root\n$relative"
     }
 }

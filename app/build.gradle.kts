@@ -13,8 +13,8 @@ android {
         applicationId = "dev.exau.photos"
         minSdk = 26
         targetSdk = 37
-        versionCode = 33
-        versionName = "1.32"
+        versionCode = 37
+        versionName = "1.36"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

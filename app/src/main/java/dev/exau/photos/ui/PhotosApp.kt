@@ -59,6 +59,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -80,6 +81,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.decode.VideoFrameDecoder
@@ -135,6 +139,7 @@ fun PhotosApp(
     val context = LocalContext.current
     val imageLoader = context.imageLoader
     var hasAccess by remember { mutableStateOf(hasMediaAccess(context)) }
+    var limitedAccess by remember { mutableStateOf(hasLimitedMediaAccess(context)) }
     var tab by remember { mutableStateOf(Tab.Albums) }
     var route by remember { mutableStateOf<Route>(Route.Library) }
 
@@ -153,7 +158,21 @@ fun PhotosApp(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) {
         hasAccess = hasMediaAccess(context)
+        limitedAccess = hasLimitedMediaAccess(context)
         if (hasAccess) viewModel.refresh()
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasAccess = hasMediaAccess(context)
+                limitedAccess = hasLimitedMediaAccess(context)
+                if (hasAccess) viewModel.refresh()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     LaunchedEffect(hasAccess) {
@@ -415,6 +434,13 @@ fun PhotosApp(
                     onRequestDelete = { item ->
                         launchWrite(if (fromBin) "delete" else "trash", listOf(item))
                     },
+                    onSetCover = if (!fromBin && current.back is Route.Album &&
+                        (current.back as Route.Album).bucketId != LikedAlbumId
+                    ) {
+                        { item -> viewModel.setAlbumCover(item) }
+                    } else {
+                        null
+                    },
                 )
             }
         }
@@ -504,14 +530,15 @@ fun PhotosApp(
                         }
                     }
                 },
+                onSetCover = viewModel::setFolderCover,
             )
         }
 
         is Route.Album -> {
             val albumItems = if (current.bucketId == LikedAlbumId) {
-                viewModel.favoriteItems.sortedBy { it.dateTaken }
+                viewModel.favoriteItems.sortedByDescending { it.dateTaken }
             } else {
-                viewModel.items.filter { it.bucketId == current.bucketId }.sortedBy { it.dateTaken }
+                viewModel.items.filter { it.bucketId == current.bucketId }.sortedByDescending { it.dateTaken }
             }
             AlbumScreen(
                 title = current.name,
@@ -522,6 +549,7 @@ fun PhotosApp(
                 },
                 onShare = { shareItems(context, it) },
                 onTrash = { launchWrite("trash", it) },
+                onCover = if (current.bucketId == LikedAlbumId) null else viewModel::setAlbumCover,
             )
         }
 
@@ -553,6 +581,11 @@ fun PhotosApp(
                             route = Route.Immich
                             if (viewModel.immichConnected) viewModel.refreshImmich()
                         },
+                    )
+                }
+                if (limitedAccess && tab == Tab.Albums) {
+                    LimitedAccessBanner(
+                        onAllowAll = { permissionLauncher.launch(requiredPermissions()) },
                     )
                 }
                 Box(modifier = Modifier.weight(1f)) {
@@ -588,9 +621,7 @@ fun PhotosApp(
                                 AlbumsList(
                                     albums = viewModel.albums,
                                     binCount = viewModel.trashed.size,
-                                    binCover = viewModel.trashed.firstOrNull(),
                                     likedCount = viewModel.favoriteItems.size,
-                                    likedCover = viewModel.favoriteItems.firstOrNull(),
                                     onOpen = { album ->
                                         route = Route.Album(album.bucketId, album.name)
                                     },
@@ -658,6 +689,7 @@ fun PhotosApp(
                                 onZip = viewModel::zipFiles,
                                 onUnzip = viewModel::unzipFile,
                                 onHide = viewModel::hideFiles,
+                                onSetCover = viewModel::setFolderCover,
                                 onShare = { entries ->
                                     if (preparing) return@FilesScreen
                                     preparing = true
@@ -900,7 +932,7 @@ private fun PermissionScreen(onGrant: () -> Unit, onSettings: () -> Unit) {
         Text("Files", style = MaterialTheme.typography.displayMedium, color = Color.White)
         Spacer(Modifier.height(12.dp))
         Text(
-            "Browse this phone and Samba shares. Immich is optional backup — not Google.",
+            "Photos, files, and Samba on this phone. Tap Allow all photos — not Select photos — or Camera shots stay hidden.",
             style = MaterialTheme.typography.bodyLarge,
             color = Mist,
             textAlign = TextAlign.Center,
@@ -918,6 +950,31 @@ private fun PermissionScreen(onGrant: () -> Unit, onSettings: () -> Unit) {
         }
         Spacer(Modifier.height(8.dp))
         TextButton(onClick = onSettings) { Text("Open settings", color = Mist) }
+    }
+}
+
+@Composable
+private fun LimitedAccessBanner(onAllowAll: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(InkRaised)
+            .padding(14.dp),
+    ) {
+        Text(
+            "Camera photos are hidden. Android only showed selected items — choose Allow all photos.",
+            color = Color.White,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Spacer(Modifier.height(10.dp))
+        Button(
+            onClick = onAllowAll,
+            modifier = Modifier.fillMaxWidth().height(44.dp),
+            shape = RoundedCornerShape(22.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Amber, contentColor = Ink),
+        ) { Text("Allow all photos") }
     }
 }
 
@@ -1004,9 +1061,7 @@ internal fun SectionedGrid(
 private fun AlbumsList(
     albums: List<dev.exau.photos.data.Album>,
     binCount: Int,
-    binCover: MediaItem?,
     likedCount: Int,
-    likedCover: MediaItem?,
     onOpen: (dev.exau.photos.data.Album) -> Unit,
     onOpenBin: () -> Unit,
     onOpenLiked: () -> Unit,
@@ -1018,84 +1073,6 @@ private fun AlbumsList(
         verticalArrangement = Arrangement.spacedBy(18.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
-        item(key = "bin") {
-            Column(modifier = Modifier.clickable(onClick = onOpenBin)) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(1f)
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(InkRaised),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (binCover != null) {
-                        MediaThumb(
-                            item = binCover,
-                            onClick = onOpenBin,
-                            modifier = Modifier.fillMaxSize(),
-                            shape = RoundedCornerShape(18.dp),
-                        )
-                        Box(
-                            Modifier
-                                .fillMaxSize()
-                                .background(Color(0x66000000)),
-                        )
-                    }
-                    Icon(
-                        Icons.Filled.Delete,
-                        contentDescription = null,
-                        tint = Amber,
-                        modifier = Modifier.size(36.dp),
-                    )
-                }
-                Spacer(Modifier.height(8.dp))
-                Text("Bin", style = MaterialTheme.typography.titleMedium, color = Color.White)
-                Text(
-                    if (binCount == 0) "Empty" else "$binCount ${if (binCount == 1) "item" else "items"}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Mist,
-                )
-            }
-        }
-        item(key = "liked") {
-            Column(modifier = Modifier.clickable(onClick = onOpenLiked)) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(1f)
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(InkRaised),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (likedCover != null) {
-                        MediaThumb(
-                            item = likedCover,
-                            onClick = onOpenLiked,
-                            modifier = Modifier.fillMaxSize(),
-                            shape = RoundedCornerShape(18.dp),
-                        )
-                        Box(
-                            Modifier
-                                .fillMaxSize()
-                                .background(Color(0x66000000)),
-                        )
-                    }
-                    Icon(
-                        Icons.Filled.Star,
-                        contentDescription = null,
-                        tint = Amber,
-                        modifier = Modifier.size(36.dp),
-                    )
-                }
-                Spacer(Modifier.height(8.dp))
-                Text("Liked", style = MaterialTheme.typography.titleMedium, color = Color.White)
-                Text(
-                    if (likedCount == 0) "None yet" else "$likedCount ${if (likedCount == 1) "item" else "items"}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Mist,
-                )
-            }
-        }
         items(albums, key = { it.bucketId }) { album ->
             Column(modifier = Modifier.clickable { onOpen(album) }) {
                 MediaThumb(
@@ -1119,6 +1096,52 @@ private fun AlbumsList(
                 )
             }
         }
+        item(key = "library-tools", span = { GridItemSpan(2) }) {
+            Row(
+                modifier = Modifier.padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                LibraryChip(
+                    title = "Liked",
+                    subtitle = if (likedCount == 0) "None yet" else "$likedCount",
+                    icon = Icons.Filled.Star,
+                    onClick = onOpenLiked,
+                    modifier = Modifier.weight(1f),
+                )
+                LibraryChip(
+                    title = "Bin",
+                    subtitle = if (binCount == 0) "Empty" else "$binCount",
+                    icon = Icons.Filled.Delete,
+                    onClick = onOpenBin,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LibraryChip(
+    title: String,
+    subtitle: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(InkRaised)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = Amber, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.size(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = Color.White, style = MaterialTheme.typography.titleMedium)
+            Text(subtitle, color = Mist, style = MaterialTheme.typography.bodyMedium)
+        }
     }
 }
 
@@ -1130,6 +1153,7 @@ private fun AlbumScreen(
     onOpen: (MediaItem) -> Unit,
     onShare: (List<MediaItem>) -> Unit,
     onTrash: (List<MediaItem>) -> Unit,
+    onCover: ((MediaItem) -> Unit)? = null,
 ) {
     var selecting by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<Long>()) }
@@ -1164,6 +1188,16 @@ private fun AlbumScreen(
                     selectedIds = if (selectedIds.size == items.size) emptySet() else items.map { it.id }.toSet()
                 },
                 onShare = { onShare(chosen) },
+                onCover = if (onCover != null) {
+                    {
+                        val one = chosen.singleOrNull()
+                        if (one != null && !one.isVideo) onCover.invoke(one)
+                        selecting = false
+                        selectedIds = emptySet()
+                    }
+                } else {
+                    null
+                },
                 onTrash = { onTrash(chosen) },
             )
         } else {
@@ -1343,6 +1377,14 @@ internal fun requiredPermissions(): Array<String> =
     } else {
         arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
     }
+
+internal fun hasLimitedMediaAccess(context: android.content.Context): Boolean {
+    if (Build.VERSION.SDK_INT < 33) return false
+    fun granted(permission: String) =
+        ContextCompat.checkSelfPermission(context, permission) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+    return hasMediaAccess(context) && !granted(Manifest.permission.READ_MEDIA_IMAGES)
+}
 
 internal fun hasMediaAccess(context: android.content.Context): Boolean {
     fun granted(permission: String) =

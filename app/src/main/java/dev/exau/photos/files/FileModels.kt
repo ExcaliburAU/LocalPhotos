@@ -26,6 +26,7 @@ data class FileEntry(
     val isVideo: Boolean,
     val size: Long,
     val lastModified: Long,
+    val coverRelative: String? = null,
 ) {
     val isMedia: Boolean get() = isImage || isVideo
 }

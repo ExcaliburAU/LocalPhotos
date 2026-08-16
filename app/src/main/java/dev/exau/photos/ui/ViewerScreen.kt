@@ -64,6 +64,7 @@ fun ViewerScreen(
     onRequestDelete: (MediaItem) -> Unit,
     onEdit: ((MediaItem) -> Unit)? = null,
     onRestore: ((MediaItem) -> Unit)? = null,
+    onSetCover: ((MediaItem) -> Unit)? = null,
 ) {
     val startIndex = items.indexOfFirst { it.id == startId }.coerceAtLeast(0)
     val pagerState = rememberPagerState(initialPage = startIndex, pageCount = { items.size })
@@ -266,6 +267,13 @@ fun ViewerScreen(
                     if (current.isVideo) InfoRow("Length", MediaRepository.formatDuration(current.durationMs))
                     Spacer(Modifier.height(8.dp))
                     Text("Stored only on this device.", color = Mist, style = MaterialTheme.typography.bodyMedium)
+                    if (onSetCover != null && !current.isVideo) {
+                        Spacer(Modifier.height(12.dp))
+                        TextButton(onClick = {
+                            showInfo = false
+                            onSetCover(current)
+                        }) { Text("Use as album cover", color = Amber) }
+                    }
                 }
             },
             confirmButton = {

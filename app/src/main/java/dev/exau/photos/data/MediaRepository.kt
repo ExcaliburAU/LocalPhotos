@@ -3,9 +3,12 @@ package dev.exau.photos.data
 import android.content.ContentResolver
 import android.content.ContentUris
 import android.content.Context
+import android.media.MediaScannerConnection
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.provider.MediaStore
+import java.io.File
 import java.text.DateFormat
 import java.util.Calendar
 import java.util.Date
@@ -50,7 +53,7 @@ class MediaRepository(private val context: Context) {
                 Album(
                     bucketId = id,
                     name = name,
-                    cover = list.minBy { it.dateTaken },
+                    cover = list.maxBy { it.dateTaken },
                     count = list.size,
                 ) to list.maxOf { it.dateTaken }
             }
@@ -58,14 +61,55 @@ class MediaRepository(private val context: Context) {
             .map { it.first }
     }
 
-    private fun queryImages(trashedOnly: Boolean): List<MediaItem> {
-        val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-        return query(uri, baseProjection(isVideo = false), isVideo = false, trashedOnly = trashedOnly)
+    fun scanCaptures() {
+        val dcim = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM)
+        val pictures = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+        val paths = LinkedHashSet<String>()
+        listOf(dcim, File(dcim, "Camera"), pictures, File(pictures, "Camera")).forEach { dir ->
+            if (!dir.isDirectory) return@forEach
+            paths += dir.absolutePath
+            dir.listFiles()
+                ?.filter { it.isFile }
+                ?.sortedByDescending { it.lastModified() }
+                ?.take(40)
+                ?.forEach { paths += it.absolutePath }
+        }
+        if (paths.isEmpty()) return
+        MediaScannerConnection.scanFile(context, paths.toTypedArray(), null, null)
     }
 
-    private fun queryVideos(trashedOnly: Boolean): List<MediaItem> {
-        val uri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-        return query(uri, baseProjection(isVideo = true), isVideo = true, trashedOnly = trashedOnly)
+    private fun queryImages(trashedOnly: Boolean): List<MediaItem> =
+        queryAllVolumes(image = true, trashedOnly = trashedOnly)
+
+    private fun queryVideos(trashedOnly: Boolean): List<MediaItem> =
+        queryAllVolumes(image = false, trashedOnly = trashedOnly)
+
+    private fun queryAllVolumes(image: Boolean, trashedOnly: Boolean): List<MediaItem> {
+        val uris = mediaUris(image)
+        val seen = HashSet<String>()
+        val items = ArrayList<MediaItem>()
+        uris.forEach { uri ->
+            query(uri, baseProjection(isVideo = !image), isVideo = !image, trashedOnly = trashedOnly).forEach { item ->
+                if (seen.add(item.uri.toString())) items += item
+            }
+        }
+        return items
+    }
+
+    private fun mediaUris(image: Boolean): List<android.net.Uri> {
+        if (Build.VERSION.SDK_INT >= 29) {
+            val volumes = MediaStore.getExternalVolumeNames(context)
+            if (volumes.isNotEmpty()) {
+                return volumes.map { volume ->
+                    if (image) MediaStore.Images.Media.getContentUri(volume)
+                    else MediaStore.Video.Media.getContentUri(volume)
+                }
+            }
+        }
+        return listOf(
+            if (image) MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            else MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+        )
     }
 
     private fun baseProjection(isVideo: Boolean): Array<String> {
@@ -93,6 +137,7 @@ class MediaRepository(private val context: Context) {
         projection: Array<String>,
         isVideo: Boolean,
         trashedOnly: Boolean,
+        includePending: Boolean = true,
     ): List<MediaItem> {
         val result = ArrayList<MediaItem>()
         val sort = "${MediaStore.MediaColumns.DATE_TAKEN} DESC"
@@ -105,6 +150,9 @@ class MediaRepository(private val context: Context) {
                             MediaStore.QUERY_ARG_MATCH_TRASHED,
                             if (trashedOnly) MediaStore.MATCH_ONLY else MediaStore.MATCH_EXCLUDE,
                         )
+                        if (!trashedOnly && includePending) {
+                            putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
+                        }
                     }
                 }
                 context.contentResolver.query(collection, projection, args, null)
@@ -131,6 +179,7 @@ class MediaRepository(private val context: Context) {
                     val added = it.getLong(addedCol)
                     val dateTaken = when {
                         takenRaw > 10_000_000_000L -> takenRaw
+                        takenRaw > 1_000_000_000L -> takenRaw * 1000L
                         takenRaw > 0L -> takenRaw
                         else -> added * 1000L
                     }
@@ -163,7 +212,11 @@ class MediaRepository(private val context: Context) {
         } catch (_: SecurityException) {
             return emptyList()
         } catch (_: IllegalArgumentException) {
-            return emptyList()
+            return if (includePending) {
+                query(collection, projection, isVideo, trashedOnly, includePending = false)
+            } else {
+                emptyList()
+            }
         }
         return result
     }

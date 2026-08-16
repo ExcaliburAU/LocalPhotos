@@ -46,4 +46,4 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ## Current version
 
-1.32
+1.36
